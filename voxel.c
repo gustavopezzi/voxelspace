@@ -6,38 +6,42 @@
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 200
-#define SCALE_FACTOR 100.0
+#define MAP_N 1024
+#define SCALE_FACTOR 70.0
 
-/*****************************************************************************/
-/* BUFFERS FOR HEIGHTMAP & COLORMAP                                          */
-/*****************************************************************************/
-uint8_t* heightmap = NULL; // Buffer/array to hold height values (1024*1024)
-uint8_t* colormap  = NULL; // Buffer/array to hold color values  (1024*1024)
+///////////////////////////////////////////////////////////////////////////////
+// Buffers for Heightmap and Colormap
+///////////////////////////////////////////////////////////////////////////////
+uint8_t* heightmap = NULL;   // Buffer/array to hold height values (1024*1024)
+uint8_t* colormap  = NULL;   // Buffer/array to hold color values  (1024*1024)
 
-/*****************************************************************************/
-/* CAMERA DECLARATION                                                        */
-/*****************************************************************************/
+///////////////////////////////////////////////////////////////////////////////
+// Camera struct type declaration
+///////////////////////////////////////////////////////////////////////////////
 typedef struct {
-  float x;       // x position on the map
-  float y;       // y position on the map
-  float height;  // height of the camera
-  float horizon; // offset of the horizon position (looking up-down)
-  float zfar;    // distance of the camera looking forward
-  float angle;   // camera angle (radians, clockwise)
+  float x;         // x position on the map
+  float y;         // y position on the map
+  float height;    // height of the camera
+  float horizon;   // offset of the horizon position (looking up-down)
+  float zfar;      // distance of the camera looking forward
+  float angle;     // camera angle (radians, clockwise)
 } camera_t;
 
+///////////////////////////////////////////////////////////////////////////////
+// Camera initialization
+///////////////////////////////////////////////////////////////////////////////
 camera_t camera = {
   .x       = 512.0,
   .y       = 512.0,
-  .height  = 80.0,
-  .horizon = 50.0,
+  .height  = 70.0,
+  .horizon = 60.0,
   .zfar    = 600.0,
-  .angle   = 1.5 * 3.141592 
+  .angle   = 1.5 * 3.141592 // (= 270 deg)
 };
 
-/*****************************************************************************/
-/* PROCESS KEYBOARD INPUT                                                    */
-/*****************************************************************************/
+///////////////////////////////////////////////////////////////////////////////
+// Handle keyboard input
+///////////////////////////////////////////////////////////////////////////////
 void processinput() {
   if (keystate(KEY_UP)) {
     camera.x += cos(camera.angle);
@@ -67,26 +71,34 @@ void processinput() {
   }
 }
 
-/*****************************************************************************/
-/* MAIN                                                                      */
-/*****************************************************************************/
+///////////////////////////////////////////////////////////////////////////////
+// Main function
+///////////////////////////////////////////////////////////////////////////////
 int main(int argc, char* args[]) {
   setvideomode(videomode_320x200);
 
+  // Declare an array to hold the max. number of possible colors (*3 for RGB)
   uint8_t palette[256 * 3];
-  int map_width, map_height, pal_count;
+  int palsize;
 
-  colormap = loadgif("maps/map0.color.gif", NULL, NULL, &pal_count, palette);
-  heightmap = loadgif("maps/map0.height.gif", NULL, NULL, NULL, NULL);
+  // Load the colormap, heightmap, and palette from the external GIF files
+  colormap = loadgif("maps/gif/map0.color.gif", NULL, NULL, &palsize, palette);
+  heightmap = loadgif("maps/gif/map0.height.gif", NULL, NULL, NULL, NULL);
 
-  for (int i = 0; i < pal_count; i++) {
+  // Load the system color palette based on the colors found in the GIF file
+  for (int i = 0; i < palsize; i++) {
     setpal(i, palette[3 * i + 0], palette[3 * i + 1], palette[3 * i + 2]);
   }
-  setpal(0, 36, 36, 56);
-  
+
+  // Set the default background color of the system (palette index 0)
+  // setpal(0, 36, 36, 56);
+
   setdoublebuffer(1);
+
+  // Allocate a new framebuffer for the current screen (320*200 bytes)
   uint8_t* framebuffer = screenbuffer();
 
+  // Game loop
   while (!shuttingdown()) {
     waitvbl();
     clearscreen();
@@ -96,43 +108,46 @@ int main(int argc, char* args[]) {
     float sinangle = sin(camera.angle);
     float cosangle = cos(camera.angle);
 
+    // Left-most point of the FOV
     float plx = cosangle * camera.zfar + sinangle * camera.zfar;
     float ply = sinangle * camera.zfar - cosangle * camera.zfar;
 
+    // Right-most point of the FOV
     float prx = cosangle * camera.zfar - sinangle * camera.zfar;
     float pry = sinangle * camera.zfar + cosangle * camera.zfar;
 
     // Loop 320 rays from left to right
     for (int i = 0; i < SCREEN_WIDTH; i++) {
-      float delta_x = (plx + (prx - plx) / SCREEN_WIDTH * i) / camera.zfar;
-      float delta_y = (ply + (pry - ply) / SCREEN_WIDTH * i) / camera.zfar;
+      float deltax = (plx + (prx - plx) / SCREEN_WIDTH * i) / camera.zfar;
+      float deltay = (ply + (pry - ply) / SCREEN_WIDTH * i) / camera.zfar;
 
+      // Ray (x,y) coords
       float rx = camera.x;
       float ry = camera.y;
 
-      float max_height = SCREEN_HEIGHT;
+      // Store the tallest projected height per-ray
+      float tallestheight = SCREEN_HEIGHT;
 
+      // Loop all depth units until the zfar distance limit
       for (int z = 1; z < camera.zfar; z++) {
-        rx += delta_x;
-        ry += delta_y;
+        rx += deltax;
+        ry += deltay;
 
         // Find the offset that we have to go and fetch values from the heightmap
-        int mapoffset = ((1024 * ((int)(ry) & 1023)) + ((int)(rx) & 1023));
+        int mapoffset = ((MAP_N * ((int)(ry) & (MAP_N - 1))) + ((int)(rx) & (MAP_N - 1)));
 
-        // Project heights and find the height on-screen
-        int proj_height = (int)((camera.height - heightmap[mapoffset]) / z * SCALE_FACTOR + camera.horizon);
+        // Project height values and find the height on-screen
+        int projheight = (int)((camera.height - heightmap[mapoffset]) / z * SCALE_FACTOR + camera.horizon);
 
-        // Prevent projected height value to always be between 0 and screen height
-        proj_height = (proj_height < 0) ? 0 : proj_height;
-        proj_height = (proj_height >= SCREEN_HEIGHT) ? SCREEN_HEIGHT - 1 : proj_height;
-
-        // Only render terrain pixels if the new projected height is taller than the previous max-height
-        if (proj_height < max_height) {
+        // Only draw pixels if the new projected height is taller than the previous tallest height
+        if (projheight < tallestheight) {
           // Draw pixels from previous max-height until the new projected height
-          for (int y = proj_height; y < max_height; y++) {
-            framebuffer[(SCREEN_WIDTH * y) + i] = (uint8_t)colormap[mapoffset];
+          for (int y = projheight; y < tallestheight; y++) {
+            if (y >= 0) {
+              framebuffer[(SCREEN_WIDTH * y) + i] = colormap[mapoffset];
+            }
           }
-          max_height = proj_height;
+          tallestheight = projheight;
         }
       }
     }
@@ -142,9 +157,6 @@ int main(int argc, char* args[]) {
     if (keystate(KEY_ESCAPE))
       break;
   }
-
-  free(colormap);
-  free(heightmap);
 
   return EXIT_SUCCESS;
 }
