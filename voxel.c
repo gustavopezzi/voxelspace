@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <math.h>
@@ -77,13 +78,27 @@ void processinput() {
 int main(int argc, char* args[]) {
   setvideomode(videomode_320x200);
 
+  int mapId = 0;
+  if (argc > 1) {
+    mapId = atoi(args[1]);
+    if (mapId < 0) {
+      mapId = 0;
+    } else if (mapId > 29) {
+      mapId = 29;
+    }
+  }
+  char colormapPath[64];
+  char heightmapPath[64];
+  snprintf(colormapPath, sizeof(colormapPath), "maps/gif/map%d.color.gif", mapId);
+  snprintf(heightmapPath, sizeof(heightmapPath), "maps/gif/map%d.height.gif", mapId);
+
   // Declare an array to hold the max. number of possible colors (*3 for RGB)
   uint8_t palette[256 * 3];
   int palsize;
 
   // Load the colormap, heightmap, and palette from the external GIF files
-  colormap = loadgif("maps/gif/map0.color.gif", NULL, NULL, &palsize, palette);
-  heightmap = loadgif("maps/gif/map0.height.gif", NULL, NULL, NULL, NULL);
+  colormap = loadgif(colormapPath, NULL, NULL, &palsize, palette);
+  heightmap = loadgif(heightmapPath, NULL, NULL, NULL, NULL);
 
   // Load the system color palette based on the colors found in the GIF file
   for (int i = 0; i < palsize; i++) {
